@@ -57,11 +57,12 @@ for item in st.session_state.dataset:
     if item["id"] not in st.session_state.vote_database:
         st.session_state.vote_database[item["id"]] = {"Toxic": 0, "Safe": 0}
 
-# 2. Sidebar with QR Code & Live AI Memory Weights
+# 2. Sidebar with YOUR LIVE APP QR Code & Live AI Memory Weights
 with st.sidebar:
     st.header("📲 Student Access")
-    # Captures your current hosted URL or network IP automatically
-    app_url = st.query_params.get("url", "http://localhost:8501")
+    
+    # YOUR DEPLOYED URL DETAILED HERE
+    app_url = "https://human-in-the-loop-simulation-nwty9jxhv6vb7gjyc3dodw.streamlit.app/"
     
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(app_url)
@@ -113,11 +114,9 @@ if st.session_state.current_idx < len(st.session_state.dataset):
                 
         st.write("---")
         if st.button("➡️ Lock Votes & Advance", type="primary"):
-            # Update AI parameters using current validation pool ratios before moving forward
             total_votes = st.session_state.vote_database[active_item["id"]]["Toxic"] + st.session_state.vote_database[active_item["id"]]["Safe"]
             if total_votes > 0:
                 toxic_ratio = st.session_state.vote_database[active_item["id"]]["Toxic"] / total_votes
-                # Adjust weights smoothly towards human consensus
                 st.session_state.ai_weights[active_item["keyword"]] = round((st.session_state.ai_weights[active_item["keyword"]] + toxic_ratio) / 2, 2)
                 
             st.session_state.current_idx += 1
