@@ -2,178 +2,139 @@ import streamlit as st
 import time
 import pandas as pd
 
-# Make sure to run: pip install qrcode pillow
-import qrcode
-from io import BytesIO
+st.set_page_config(page_title="AI Knowledge Base Simulation", layout="wide")
 
-# 1. Page Config
-st.set_page_config(page_title="HITL Advanced Moderator", layout="wide")
-
-# Custom CSS for UI animations
+# Custom CSS for UI Feedback
 st.markdown("""
 <style>
-    .comment-box {
+    .comment-card {
         padding: 15px;
         border-radius: 8px;
         margin-bottom: 12px;
-        border-left: 5px solid #3498db;
+        border-left: 5px solid #bdc3c7;
         background-color: #f8f9fa;
-        transition: all 0.4s ease-in-out;
     }
-    .red-flagged {
-        background-color: #fde8e8 !important;
-        border-left: 5px solid #e74c3c !important;
-        color: #c0392b !important;
-        font-weight: bold;
-    }
-    .green-passed {
-        background-color: #edf7ed !important;
-        border-left: 5px solid #2ecc71 !important;
-        color: #27ae60 !important;
-    }
+    .toxic-style { background-color: #fde8e8 !important; border-left: 5px solid #e74c3c !important; color: #c0392b; font-weight: bold;}
+    .safe-style { background-color: #edf7ed !important; border-left: 5px solid #2ecc71 !important; color: #27ae60; font-weight: bold;}
 </style>
 """, unsafe_allow_html=True)
 
-# 2. Sidebar with QR Code for Classroom Joins
-with st.sidebar:
-    st.header("📲 Student Access")
-    # Dynamically generate QR code to match your current hosted URL or local network IP
-    app_url = st.query_params.get("url", "http://localhost:8501")
+# 1. Initialization & 12-Question Dataset
+if 'sim_step' not in st.session_state:
+    st.session_state.sim_step = 0  # Tracks our position from 0 to 12
+    st.session_state.ai_knowledge_base = {}  # Dynamic rules learned from humans
+    st.session_state.logs = []  # Statistical tracking
     
-    qr = qrcode.QRCode(version=1, box_size=10, border=2)
-    qr.add_data(app_url)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    st.image(buf.getvalue(), caption="Scan to moderate alongside the instructor!")
-    st.caption(f"Target URL: `{app_url}`")
-
-st.title("🛡️ Advanced Human-in-the-Loop Simulation")
-st.write("Goal: Train students to spot *adversarial text variants* while protecting harmless context.")
-
-# 3. State Management Setup
-if 'batch_idx' not in st.session_state:
-    st.session_state.batch_idx = 0
-    st.session_state.history = []  # Stores statistical outcomes
-    
-    # Complex Dataset with both bad and safe context variations
-    st.session_state.dataset = [
-        {
-            "keyword": "go dye (Target Variant)",
-            "comments": [
-                {"text": "Bro, you are useless, just go dye.", "is_bad": True},
-                {"text": "I think you should go dye your hair blonde.", "is_bad": False}, # SAFE!
-                {"text": "Why don't you delete life and go dye?", "is_bad": True},
-                {"text": "Go dye your shirt if it has stains.", "is_bad": False}, # SAFE!
-                {"text": "Go dye in a ditch.", "is_bad": True}
-            ]
-        },
-        {
-            "keyword": "u r tr@sh (Target Variant)",
-            "comments": [
-                {"text": "Worst team member ever u r tr@sh.", "is_bad": True},
-                {"text": "Remember to take out the bins because u r tr@sh person.", "is_bad": True},
-                {"text": "The recyclables go over there, u r tr@sh collection day is Tuesday.", "is_bad": False}, # SAFE!
-                {"text": "Uninstall the application u r tr@sh.", "is_bad": True},
-                {"text": "u r tr@sh at cooking raw food.", "is_bad": True}
-            ]
-        }
+    # 12 Detailed Questions divided into your 3 requested structural phases
+    st.session_state.questions = [
+        # === PHASE 1: ALL POSSIBLE NEGATIVE COMMENTS ===
+        {"text": "Bro, honestly just go dye.", "keyword": "go dye", "is_toxic": True, "phase": "Phase 1: Pure Negative"},
+        {"text": "You are literal tr@sh throw yourself away.", "keyword": "tr@sh", "is_toxic": True, "phase": "Phase 1: Pure Negative"},
+        {"text": "I hope your account gets deleted and you go dye in a hole.", "keyword": "go dye", "is_toxic": True, "phase": "Phase 1: Pure Negative"},
+        {"text": "Delete this video u r tr@sh garbage human.", "keyword": "tr@sh", "is_toxic": True, "phase": "Phase 1: Pure Negative"},
+        
+        # === PHASE 2: ALL POSSIBLE SAFE COMMENTS ===
+        {"text": "I need to go dye my hair roots dark blue this weekend.", "keyword": "go dye", "is_toxic": False, "phase": "Phase 2: Pure Safe"},
+        {"text": "Don't forget that tr@sh collection day was moved to Tuesday.", "keyword": "tr@sh", "is_toxic": False, "phase": "Phase 2: Pure Safe"},
+        {"text": "Should I go dye this cotton shirt or use fabric paint?", "keyword": "go dye", "is_toxic": False, "phase": "Phase 2: Pure Safe"},
+        {"text": "Can you empty the tr@sh bin in the kitchen please?", "keyword": "tr@sh", "is_toxic": False, "phase": "Phase 2: Pure Safe"},
+        
+        # === PHASE 3: MIXED BAD AND GOOD ===
+        {"text": "Go dye your hair? No, how about you just go dye.", "keyword": "go dye", "is_toxic": True, "phase": "Phase 3: Mixed Evaluation"},
+        {"text": "This artwork is beautiful, it looks like custom tie-dye!", "keyword": "go dye", "is_toxic": False, "phase": "Phase 3: Mixed Evaluation"},
+        {"text": "Stop posting your trash game clips u r tr@sh.", "keyword": "tr@sh", "is_toxic": True, "phase": "Phase 3: Mixed Evaluation"},
+        {"text": "The recycling program helps reduce local tr@sh waste.", "keyword": "tr@sh", "is_toxic": False, "phase": "Phase 3: Mixed Evaluation"}
     ]
 
-# 4. Main Loop Logic
-if st.session_state.batch_idx < len(st.session_state.dataset):
-    current_batch = st.session_state.dataset[st.session_state.batch_idx]
+# 2. Main Sidebar Navigation & AI Memory View
+with st.sidebar:
+    st.title("🧠 AI Memory Core")
+    st.write("This is what the AI is actively logging based on student inputs:")
     
-    st.subheader(f"Current Target Filter: `{current_batch['keyword']}`")
-    st.info("🤖 **AI Flagged Flag:** All items below contain the target string. Humans must evaluate the real context.")
-    
-    # Show active items
-    placeholders = []
-    for item in current_batch["comments"]:
-        p = st.empty()
-        p.markdown(f'<div class="comment-box">💬 {item["text"]}</div>', unsafe_allow_html=True)
-        placeholders.append(p)
+    if st.session_state.ai_knowledge_base:
+        for kw, decision in st.session_state.ai_knowledge_base.items():
+            st.code(f"IF context contains '{kw}'\nTHEN pattern learned: {decision}")
+    else:
+        st.caption("AI knowledge base is currently empty. Awaiting student judgments...")
         
     st.write("---")
+    # Progress Tracking
+    progress = min(st.session_state.sim_step / 12, 1.0)
+    st.progress(progress)
+    st.caption(f"Completed: {st.session_state.sim_step} / 12 moderation tasks")
+
+# 3. Execution Game Logic
+if st.session_state.sim_step < 12:
+    current_q = st.session_state.questions[st.session_state.sim_step]
     
-    # Decisions Interface
+    # Header display showing the explicit phase
+    st.subheader(f"🎬 Current Simulation Block: {current_q['phase']}")
+    st.write(f"**Item Progress:** Question {st.session_state.sim_step + 1} of 12")
+    
+    # Render the text container placeholder
+    card_placeholder = st.empty()
+    card_placeholder.markdown(f'<div class="comment-card">💬 "{current_q["text"]}"</div>', unsafe_allow_html=True)
+    
+    st.write("#### 🧑‍⚖️ Class Verdict: Does this comment require an administrative safety ban?")
+    
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🚨 Purge Malicious Variant Only", use_container_width=True):
-            st.write("⏳ AI running Context-Aware Red-Flag Cleanse...")
+        if st.button("🚨 YES - Flag As Malicious", use_container_width=True):
+            # Show red-flag feedback transformation
+            card_placeholder.markdown(f'<div class="comment-card toxic-style">🚨 [FLAGGED & PURGED] "{current_q["text"]}"</div>', unsafe_allow_html=True)
+            time.sleep(0.8)
+            card_placeholder.empty() # Vanishing animation step
             
-            bad_count = 0
-            safe_count = 0
+            # Update AI Memory Core
+            st.session_state.ai_knowledge_base[current_q["text"]] = "MARKED AS HARASSMENT"
+            st.session_state.logs.append({"text": current_q["text"], "phase": current_q["phase"], "verdict": "Flagged", "correct": current_q["is_toxic"] == True})
             
-            for idx, item in enumerate(current_batch["comments"]):
-                time.sleep(0.6)
-                if item["is_bad"]:
-                    # Turn Red
-                    placeholders[idx].markdown(f'<div class="comment-box red-flagged">🚨 [REMOVED] {item["text"]}</div>', unsafe_allow_html=True)
-                    time.sleep(0.6)
-                    placeholders[idx].empty() # Vanish
-                    bad_count += 1
-                else:
-                    # Turn Green and Stay
-                    placeholders[idx].markdown(f'<div class="comment-box green-passed">✅ [SAFE CONTEXT PRESERVED] {item["text"]}</div>', unsafe_allow_html=True)
-                    safe_count += 1
-                    
-            # Log results for statistics
-            st.session_state.history.append({
-                "keyword": current_batch["keyword"],
-                "total_flagged_by_ai": len(current_batch["comments"]),
-                "true_positive_toxic": bad_count,
-                "false_positive_safe": safe_count
-            })
-            
-            time.sleep(1.5)
-            st.session_state.batch_idx += 1
+            st.session_state.sim_step += 1
             st.rerun()
             
     with col2:
-        if st.button("⚪ Skip Phrase (All Safe Context)", use_container_width=True):
-            st.session_state.history.append({
-                "keyword": current_batch["keyword"],
-                "total_flagged_by_ai": len(current_batch["comments"]),
-                "true_positive_toxic": 0,
-                "false_positive_safe": len(current_batch["comments"])
-            })
-            st.session_state.batch_idx += 1
+        if st.button("✅ NO - Approve Safe Content", use_container_width=True):
+            # Show safe green feedback transformation
+            card_placeholder.markdown(f'<div class="comment-card safe-style">✅ [APPROVED CONTENT] "{current_q["text"]}"</div>', unsafe_allow_html=True)
+            time.sleep(0.8)
+            card_placeholder.empty()
+            
+            # Update AI Memory Core
+            st.session_state.ai_knowledge_base[current_q["text"]] = "MARKED AS SAFE CONTEXT"
+            st.session_state.logs.append({"text": current_q["text"], "phase": current_q["phase"], "verdict": "Approved", "correct": current_q["is_toxic"] == False})
+            
+            st.session_state.sim_step += 1
             st.rerun()
 
-# 5. Post-Simulation Statistical Breakdown Screen
+# 4. Final Summary Page & Comprehensive Statistical Explainer
 else:
-    st.success("🎉 **Simulation Complete! All Content Batches Processed.**")
-    st.header("📊 Post-Moderation Analytics Dashboard")
+    st.balloons()
+    st.success("🏁 All 12 configuration cases have been fully moderated by the classroom!")
+    st.header("📊 Final Simulation Analysis & Analytics Review")
     
-    df = pd.DataFrame(st.session_state.history)
+    log_df = pd.DataFrame(st.session_state.logs)
     
-    # Calculations
-    total_ai_flags = df["total_flagged_by_ai"].sum()
-    total_true_toxic = df["true_positive_toxic"].sum()
-    total_false_positives = df["false_positive_safe"].sum()
-    ai_precision = (total_true_toxic / total_ai_flags) * 100 if total_ai_flags > 0 else 0
+    # Calculate performance metrics
+    total_decisions = len(log_df)
+    correct_decisions = log_df["correct"].sum()
+    student_accuracy = (correct_decisions / total_decisions) * 100
     
-    # Key Performance Indicators
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total AI Scans Triggered", total_ai_flags)
-    m2.metric("Confirmed Toxic Slang (TP)", total_true_toxic)
-    m3.metric("False Flags Prevented (FP)", total_false_positives)
-    m4.metric("AI Precision Accuracy Rate", f"{ai_precision:.1f}%")
+    col1, col2 = st.columns(2)
+    col1.metric("Total Questions Evaluated", total_decisions)
+    col2.metric("Classroom Accuracy Score", f"{student_accuracy:.1f}%")
     
-    st.write("### Data Table Summary")
-    st.dataframe(df, use_container_width=True)
+    st.write("### Comprehensive Decision Audit Trail")
+    st.dataframe(log_df, use_container_width=True)
     
-    # Educational Explainer Breakdowns
-    st.write("### 🧠 Classroom Debrief Notes")
-    st.markdown(f"""
-    * **Why did the system need humans?** The keyword rule caught everything blindly. Without human intervention, the platform would have wrongfully banned **{total_false_positives} users** who were just talking about regular things like *dying hair* or *trash schedules*.
-    * **The Operational Cost:** Because the initial AI system had a precision rate of only **{ai_precision:.1f}%**, human review teams are mandatory to protect user retention and avoid censorship errors.
+    st.write("### 🎓 Core Learning Takeaways for the Class")
+    st.markdown("""
+    1. **Phase 1 Lessons:** When evaluating purely negative content, rule creation seems incredibly easy. If the AI simply blocked strings like `"go dye"`, it would catch 100% of the bad actors here.
+    2. **Phase 2 Lessons:** When transitioning to purely safe content, context reverses everything. If the blind rules from Phase 1 remained completely unedited, the platform would have wrongfully censored users talking about *hair fashion* and *household chores*.
+    3. **Phase 3 Lessons:** The final mixed test demonstrates why static code rules fail. Human-in-the-loop systems allow software infrastructure to constantly log edge cases and append exception tables dynamically, preserving free speech while containing true toxicity.
     """)
     
-    if st.button("Restart Simulation Engine"):
-        st.session_state.batch_idx = 0
-        st.session_state.history = []
+    if st.button("Reset Entire 12-Question Simulation Loop"):
+        st.session_state.sim_step = 0
+        st.session_state.ai_knowledge_base = {}
+        st.session_state.logs = []
         st.rerun()
