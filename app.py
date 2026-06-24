@@ -1,140 +1,165 @@
 import streamlit as st
-import time
 import pandas as pd
+import time
 
-st.set_page_config(page_title="AI Knowledge Base Simulation", layout="wide")
+st.set_page_config(page_title="Crowdsourced AI Validator", layout="wide")
 
-# Custom CSS for UI Feedback
+# Custom Styles for Phase Blocks
 st.markdown("""
 <style>
-    .comment-card {
+    .comment-display {
+        font-size: 24px !important;
+        padding: 20px;
+        background-color: #f1f2f6;
+        border-radius: 10px;
+        border-left: 8px solid #34495e;
+        margin-bottom: 20px;
+        font-weight: 500;
+    }
+    .metric-card {
+        background-color: #ffffff;
         padding: 15px;
         border-radius: 8px;
-        margin-bottom: 12px;
-        border-left: 5px solid #bdc3c7;
-        background-color: #f8f9fa;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        text-align: center;
     }
-    .toxic-style { background-color: #fde8e8 !important; border-left: 5px solid #e74c3c !important; color: #c0392b; font-weight: bold;}
-    .safe-style { background-color: #edf7ed !important; border-left: 5px solid #2ecc71 !important; color: #27ae60; font-weight: bold;}
 </style>
 """, unsafe_allow_html=True)
 
-# 1. Initialization & 12-Question Dataset
-if 'sim_step' not in st.session_state:
-    st.session_state.sim_step = 0  # Tracks our position from 0 to 12
-    st.session_state.ai_knowledge_base = {}  # Dynamic rules learned from humans
-    st.session_state.logs = []  # Statistical tracking
+# 1. 20-Item Multi-Keyword Nuanced Dataset
+if 'dataset' not in st.session_state:
+    st.session_state.current_idx = 0
+    st.session_state.ai_weights = {"go dye": 0.5, "k1ll": 0.5, "clown": 0.5, "b1tch": 0.5, "KYS": 0.5}
+    st.session_state.vote_database = {} # Stores student votes per question ID
     
-    # 12 Detailed Questions divided into your 3 requested structural phases
-    st.session_state.questions = [
-        # === PHASE 1: ALL POSSIBLE NEGATIVE COMMENTS ===
-        {"text": "Bro, honestly just go dye.", "keyword": "go dye", "is_toxic": True, "phase": "Phase 1: Pure Negative"},
-        {"text": "You are literal tr@sh throw yourself away.", "keyword": "tr@sh", "is_toxic": True, "phase": "Phase 1: Pure Negative"},
-        {"text": "I hope your account gets deleted and you go dye in a hole.", "keyword": "go dye", "is_toxic": True, "phase": "Phase 1: Pure Negative"},
-        {"text": "Delete this video u r tr@sh garbage human.", "keyword": "tr@sh", "is_toxic": True, "phase": "Phase 1: Pure Negative"},
+    st.session_state.dataset = [
+        # === PHASE 1: ALL POSSIBLE NEGATIVE (Items 1-7) ===
+        {"id": 1, "phase": "Phase 1: Pure Negative", "keyword": "go dye", "text": "You are absolutely pathetic, please go dye.", "true_label": "Toxic"},
+        {"id": 2, "phase": "Phase 1: Pure Negative", "keyword": "k1ll", "text": "i will find where u live and k1ll u", "true_label": "Toxic"},
+        {"id": 3, "phase": "Phase 1: Pure Negative", "keyword": "clown", "text": "Group of losers, hope you get harassed you literal clown circus.", "true_label": "Toxic"},
+        {"id": 4, "phase": "Phase 1: Pure Negative", "keyword": "b1tch", "text": "shut up you whiny little b1tch", "true_label": "Toxic"},
+        {"id": 5, "phase": "Phase 1: Pure Negative", "keyword": "KYS", "text": "Your stream is awful, delete your account and KYS.", "true_label": "Toxic"},
+        {"id": 6, "phase": "Phase 1: Pure Negative", "keyword": "go dye", "text": "no one likes you go dye in a fire", "true_label": "Toxic"},
+        {"id": 7, "phase": "Phase 1: Pure Negative", "keyword": "k1ll", "text": "Go k1ll yourself, nobody wants you here.", "true_label": "Toxic"},
         
-        # === PHASE 2: ALL POSSIBLE SAFE COMMENTS ===
-        {"text": "I need to go dye my hair roots dark blue this weekend.", "keyword": "go dye", "is_toxic": False, "phase": "Phase 2: Pure Safe"},
-        {"text": "Don't forget that tr@sh collection day was moved to Tuesday.", "keyword": "tr@sh", "is_toxic": False, "phase": "Phase 2: Pure Safe"},
-        {"text": "Should I go dye this cotton shirt or use fabric paint?", "keyword": "go dye", "is_toxic": False, "phase": "Phase 2: Pure Safe"},
-        {"text": "Can you empty the tr@sh bin in the kitchen please?", "keyword": "tr@sh", "is_toxic": False, "phase": "Phase 2: Pure Safe"},
+        # === PHASE 2: ALL POSSIBLE SAFE (Items 8-14) ===
+        {"id": 8, "phase": "Phase 2: Pure Safe", "keyword": "go dye", "text": "I need to go dye my hair roots before the party tomorrow.", "true_label": "Safe"},
+        {"id": 9, "phase": "Phase 2: Pure Safe", "keyword": "k1ll", "text": "That stand up comedian was hilarious, his jokes absolutely k1ll.", "true_label": "Safe"},
+        {"id": 10, "phase": "Phase 2: Pure Safe", "keyword": "clown", "text": "We hired a funny clown for my little brother's 6th birthday party.", "true_label": "Safe"},
+        {"id": 11, "phase": "Phase 2: Pure Safe", "keyword": "b1tch", "text": "The female breeding dog is officially registered as a prize b1tch.", "true_label": "Safe"},
+        {"id": 12, "phase": "Phase 2: Pure Safe", "keyword": "KYS", "text": "Is KYS the official airport registration code for Orlando Kissimmee?", "true_label": "Safe"},
+        {"id": 13, "phase": "Phase 2: Pure Safe", "keyword": "go dye", "text": "Let's go dye some white shirts using the classic spiral tie-dye method.", "true_label": "Safe"},
+        {"id": 14, "phase": "Phase 2: Pure Safe", "keyword": "k1ll", "text": "Antibiotics will k1ll off the bad bacterial infection quickly.", "true_label": "Safe"},
         
-        # === PHASE 3: MIXED BAD AND GOOD ===
-        {"text": "Go dye your hair? No, how about you just go dye.", "keyword": "go dye", "is_toxic": True, "phase": "Phase 3: Mixed Evaluation"},
-        {"text": "This artwork is beautiful, it looks like custom tie-dye!", "keyword": "go dye", "is_toxic": False, "phase": "Phase 3: Mixed Evaluation"},
-        {"text": "Stop posting your trash game clips u r tr@sh.", "keyword": "tr@sh", "is_toxic": True, "phase": "Phase 3: Mixed Evaluation"},
-        {"text": "The recycling program helps reduce local tr@sh waste.", "keyword": "tr@sh", "is_toxic": False, "phase": "Phase 3: Mixed Evaluation"}
+        # === PHASE 3: MIXED AMBIGUOUS TESTS (Items 15-20) ===
+        {"id": 15, "phase": "Phase 3: Mixed Live Test", "keyword": "clown", "text": "Stop posting your trash gameplay opinions, you are a complete clown.", "true_label": "Toxic"},
+        {"id": 16, "phase": "Phase 3: Mixed Live Test", "keyword": "go dye", "text": "Nice hair color, now go dye for real.", "true_label": "Toxic"},
+        {"id": 17, "phase": "Phase 3: Mixed Live Test", "keyword": "k1ll", "text": "I'm going to k1ll time at the mall until my train arrival.", "true_label": "Safe"},
+        {"id": 18, "phase": "Phase 3: Mixed Live Test", "keyword": "b1tch", "text": "Life can be a real b1tch sometimes when everything breaks.", "true_label": "Safe"},
+        {"id": 19, "phase": "Phase 3: Mixed Live Test", "keyword": "KYS", "text": "Keep Yourself Safe out there during the heavy lightning storm! KYS!", "true_label": "Safe"},
+        {"id": 20, "phase": "Phase 3: Mixed Live Test", "keyword": "clown", "text": "You look like a clown wearing those mismatched shoes.", "true_label": "Toxic"}
     ]
 
-# 2. Main Sidebar Navigation & AI Memory View
-with st.sidebar:
-    st.title("🧠 AI Memory Core")
-    st.write("This is what the AI is actively logging based on student inputs:")
+# Initialize individual question storage counters
+for item in st.session_state.dataset:
+    if item["id"] not in st.session_state.vote_database:
+        st.session_state.vote_database[item["id"]] = {"Toxic": 0, "Safe": 0}
+
+# 2. Main Controller Interface Setup
+st.title("📊 Crowdsourced Human-in-the-Loop Engine")
+st.write("Every student acts as an independent validator node. The AI updates its threshold weights via collective consensus averages.")
+
+if st.session_state.current_idx < len(st.session_state.dataset):
+    active_item = st.session_state.dataset[st.session_state.current_idx]
     
-    if st.session_state.ai_knowledge_base:
-        for kw, decision in st.session_state.ai_knowledge_base.items():
-            st.code(f"IF context contains '{kw}'\nTHEN pattern learned: {decision}")
-    else:
-        st.caption("AI knowledge base is currently empty. Awaiting student judgments...")
+    # Structural Split Layout: Screen Left (Controls) | Screen Right (Live Statistics)
+    left_ui, right_analytics = st.columns([2, 1])
+    
+    with left_ui:
+        st.subheader(f"🎬 Current Block: {active_item['phase']}")
+        st.caption(f"Evaluation Sequence Tracker: Item {st.session_state.current_idx + 1} of 20")
         
-    st.write("---")
-    # Progress Tracking
-    progress = min(st.session_state.sim_step / 12, 1.0)
-    st.progress(progress)
-    st.caption(f"Completed: {st.session_state.sim_step} / 12 moderation tasks")
-
-# 3. Execution Game Logic
-if st.session_state.sim_step < 12:
-    current_q = st.session_state.questions[st.session_state.sim_step]
-    
-    # Header display showing the explicit phase
-    st.subheader(f"🎬 Current Simulation Block: {current_q['phase']}")
-    st.write(f"**Item Progress:** Question {st.session_state.sim_step + 1} of 12")
-    
-    # Render the text container placeholder
-    card_placeholder = st.empty()
-    card_placeholder.markdown(f'<div class="comment-card">💬 "{current_q["text"]}"</div>', unsafe_allow_html=True)
-    
-    st.write("#### 🧑‍⚖️ Class Verdict: Does this comment require an administrative safety ban?")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🚨 YES - Flag As Malicious", use_container_width=True):
-            # Show red-flag feedback transformation
-            card_placeholder.markdown(f'<div class="comment-card toxic-style">🚨 [FLAGGED & PURGED] "{current_q["text"]}"</div>', unsafe_allow_html=True)
-            time.sleep(0.8)
-            card_placeholder.empty() # Vanishing animation step
-            
-            # Update AI Memory Core
-            st.session_state.ai_knowledge_base[current_q["text"]] = "MARKED AS HARASSMENT"
-            st.session_state.logs.append({"text": current_q["text"], "phase": current_q["phase"], "verdict": "Flagged", "correct": current_q["is_toxic"] == True})
-            
-            st.session_state.sim_step += 1
-            st.rerun()
-            
-    with col2:
-        if st.button("✅ NO - Approve Safe Content", use_container_width=True):
-            # Show safe green feedback transformation
-            card_placeholder.markdown(f'<div class="comment-card safe-style">✅ [APPROVED CONTENT] "{current_q["text"]}"</div>', unsafe_allow_html=True)
-            time.sleep(0.8)
-            card_placeholder.empty()
-            
-            # Update AI Memory Core
-            st.session_state.ai_knowledge_base[current_q["text"]] = "MARKED AS SAFE CONTEXT"
-            st.session_state.logs.append({"text": current_q["text"], "phase": current_q["phase"], "verdict": "Approved", "correct": current_q["is_toxic"] == False})
-            
-            st.session_state.sim_step += 1
+        st.markdown(f'<div class="comment-display">💬 "{active_item["text"]}"</div>', unsafe_allow_html=True)
+        st.write(f"**Identified Algorithmic Sub-string Trigger:** `{active_item['keyword']}`")
+        
+        # Student Live Inputs Buttons (Simulates independent device requests hitting network state)
+        st.write("### 🧑‍💻 Cast Your Validator Vote:")
+        v_col1, v_col2 = st.columns(2)
+        with v_col1:
+            if st.button("🚨 Vote: TOXIC CONTEXT", use_container_width=True):
+                st.session_state.vote_database[active_item["id"]]["Toxic"] += 1
+                st.rerun()
+        with v_col2:
+            if st.button("✅ Vote: SAFE CONTEXT", use_container_width=True):
+                st.session_state.vote_database[active_item["id"]]["Safe"] += 1
+                st.rerun()
+                
+        st.write("---")
+        # Admin controls to slide to next sequence card
+        if st.button("➡️ Advance to Next Evaluation Card", type="primary"):
+            # Update AI parameters using current validation pool ratios before moving forward
+            total_votes = st.session_state.vote_database[active_item["id"]]["Toxic"] + st.session_state.vote_database[active_item["id"]]["Safe"]
+            if total_votes > 0:
+                toxic_ratio = st.session_state.vote_database[active_item["id"]]["Toxic"] / total_votes
+                # Adjust AI weights dynamically based on human validation trend deviation
+                st.session_state.ai_weights[active_item["keyword"]] = (st.session_state.ai_weights[active_item["keyword"]] + toxic_ratio) / 2
+                
+            st.session_state.current_idx += 1
             st.rerun()
 
-# 4. Final Summary Page & Comprehensive Statistical Explainer
+    with right_analytics:
+        st.subheader("📈 Live Consensus Pool")
+        tox_votes = st.session_state.vote_database[active_item["id"]]["Toxic"]
+        saf_votes = st.session_state.vote_database[active_item["id"]]["Safe"]
+        sum_votes = tox_votes + saf_votes
+        
+        avg_toxic_pct = (tox_votes / sum_votes) * 100 if sum_votes > 0 else 0
+        
+        st.metric("Total Validator Responses Logged", sum_votes)
+        st.metric("Average Human Toxic Weight Validation", f"{avg_toxic_pct:.1f}%")
+        
+        # Quick bar visualization
+        st.progress(avg_toxic_pct / 100)
+        
+        st.write("#### 🤖 Active AI Memory Weights")
+        st.caption("Values closer to 1.0 indicate highly validated toxic parameters.")
+        st.json(st.session_state.ai_weights)
+
+# 3. Post-Run Deep Analytics Evaluation Review
 else:
-    st.balloons()
-    st.success("🏁 All 12 configuration cases have been fully moderated by the classroom!")
-    st.header("📊 Final Simulation Analysis & Analytics Review")
+    st.success("🏁 All 20 advanced test vectors processed! AI knowledge matrices have successfully calibrated.")
+    st.header("🔬 Crowdsourced Validation Diagnostics Table")
     
-    log_df = pd.DataFrame(st.session_state.logs)
+    rows = []
+    for item in st.session_state.dataset:
+        v = st.session_state.vote_database[item["id"]]
+        total = v["Toxic"] + v["Safe"]
+        avg_toxic = (v["Toxic"] / total) * 100 if total > 0 else 0
+        
+        # Determine human choice outcome
+        validated_as = "Toxic" if avg_toxic >= 50 else "Safe"
+        if total == 0: validated_as = "No Votes Logged"
+            
+        rows.append({
+            "Question ID": item["id"],
+            "Target Phrase": item["keyword"],
+            "Comment String": item["text"],
+            "True Target": item["true_label"],
+            "Human Team Validation": validated_as,
+            "Toxic Consensus Avg %": f"{avg_toxic:.1f}%",
+            "Total Votes Received": total
+        })
+        
+    audit_df = pd.DataFrame(rows)
+    st.dataframe(audit_df, use_container_width=True)
     
-    # Calculate performance metrics
-    total_decisions = len(log_df)
-    correct_decisions = log_df["correct"].sum()
-    student_accuracy = (correct_decisions / total_decisions) * 100
-    
-    col1, col2 = st.columns(2)
-    col1.metric("Total Questions Evaluated", total_decisions)
-    col2.metric("Classroom Accuracy Score", f"{student_accuracy:.1f}%")
-    
-    st.write("### Comprehensive Decision Audit Trail")
-    st.dataframe(log_df, use_container_width=True)
-    
-    st.write("### 🎓 Core Learning Takeaways for the Class")
+    st.write("### 🧠 Operational Debrief Analysis")
     st.markdown("""
-    1. **Phase 1 Lessons:** When evaluating purely negative content, rule creation seems incredibly easy. If the AI simply blocked strings like `"go dye"`, it would catch 100% of the bad actors here.
-    2. **Phase 2 Lessons:** When transitioning to purely safe content, context reverses everything. If the blind rules from Phase 1 remained completely unedited, the platform would have wrongfully censored users talking about *hair fashion* and *household chores*.
-    3. **Phase 3 Lessons:** The final mixed test demonstrates why static code rules fail. Human-in-the-loop systems allow software infrastructure to constantly log edge cases and append exception tables dynamically, preserving free speech while containing true toxicity.
+    * **Validation Mechanism:** By calculating the **Average Human Toxic Weight**, we eliminate individual subjective biases. If a word like `"clown"` receives an average score of `15%` in Phase 2 but spikes to `92%` in Phase 3, the neural system understands context isn't binary—it operates along a fluid mathematical probability distribution.
+    * **AI Policy Shifts:** Notice the final **AI Memory Weights** on your left sidebar. Keywords that were heavily present in safe context are safely suppressed toward a threshold baseline of `0.0`, ensuring maximum system accuracy.
     """)
     
-    if st.button("Reset Entire 12-Question Simulation Loop"):
-        st.session_state.sim_step = 0
-        st.session_state.ai_knowledge_base = {}
-        st.session_state.logs = []
+    if st.button("Reset Crowd Verification Matrix"):
+        st.session_state.current_idx = 0
+        st.session_state.vote_database = {}
         st.rerun()
